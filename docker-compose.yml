@@ -1,0 +1,32 @@
+services:
+  td-hr-pruner:
+    build: .
+    image: autumnix/td-hr-pruner:latest
+    container_name: td-hr-pruner
+    restart: unless-stopped
+    environment:
+      - PUID=99
+      - PGID=100
+
+      - TD_BASE_URL=https://www.torrentday.com
+      # Either set TD_COOKIES inline (pass via .env)…
+      - TD_COOKIES=${TD_COOKIES:-}
+      # …or drop the cookie string in /config/cookies.txt (mounted below)
+
+      # upload_credit | bonus_points
+      - CLEAR_METHOD=upload_credit
+      # Cap per tick — protects against a runaway H&R surge draining your account.
+      - MAX_TB_PER_RUN=10
+      - MAX_BONUS_PER_RUN=50000
+      - CLICK_DELAY=1.0
+
+      - POLL_INTERVAL=10800   # 3 hours
+      - CONTINUOUS=true
+      - DRY_RUN=false
+
+      # Pushover notifications (optional)
+      - PUSHOVER_TOKEN=${PUSHOVER_TOKEN:-}
+      - PUSHOVER_USER=${PUSHOVER_USER:-}
+    volumes:
+      # Holds cookies.txt (and is the gosu home dir for the appuser)
+      - /mnt/user/appdata/td-hr-pruner:/config
