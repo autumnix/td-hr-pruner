@@ -255,35 +255,50 @@ def prune_once(cfg: "Config") -> None:
         log.info("DRY RUN — no clears performed")
         return
 
-    cleared = 0
-    failed: list[tuple[ClearAction, str]] = []
+    cleared_actions: list[ClearAction] = []
+    failed_actions: list[tuple[ClearAction, str]] = []
     for a in chosen:
         try:
             client.fire_clear(a)
-            cleared += 1
+            cleared_actions.append(a)
             log.info("cleared: %s", a.torrent_name)
         except Exception as e:
             log.warning("failed to clear %s: %s", a.torrent_name, e)
-            failed.append((a, str(e)))
+            failed_actions.append((a, str(e)))
         time.sleep(cfg.click_delay)
 
-    summary_lines = [
-        f"Cleared {cleared}/{len(chosen)} H&Rs via {cfg.method.replace('_', ' ')}.",
-        f"Spent ~{_fmt_units(sum(a.cost_units for a in chosen if (a, '') not in failed), cfg.method)}.",
+    spent = sum(a.cost_units for a in cleared_actions)
+    remaining = len(skipped) + len(failed_actions)
+
+    # Title: shows the headline numbers so it's readable from the Pushover banner.
+    title = f"td-hr-pruner: cleared {len(cleared_actions)}"
+    if remaining:
+        title += f" ({remaining} remain)"
+
+    body_lines = [
+        f"Cleared {len(cleared_actions)}/{len(chosen)} H&Rs ({_fmt_units(spent, cfg.method)} spent).",
     ]
-    if skipped:
-        summary_lines.append(f"Skipped {len(skipped)} over per-run cap.")
-    if failed:
-        summary_lines.append(f"{len(failed)} failed (see logs).")
-    msg = "\n".join(summary_lines)
+    if remaining:
+        breakdown = []
+        if skipped:
+            breakdown.append(f"{len(skipped)} over cap")
+        if failed_actions:
+            breakdown.append(f"{len(failed_actions)} failed")
+        body_lines.append(f"{remaining} remain — " + ", ".join(breakdown) + ".")
+    if failed_actions:
+        # First failure reason (truncated) is usually enough context.
+        first = failed_actions[0]
+        body_lines.append(f"First failure: {first[0].torrent_name} — {first[1][:120]}")
+
+    msg = "\n".join(body_lines)
     log.info(msg.replace("\n", " | "))
 
-    if cleared or failed:
+    if cleared_actions or failed_actions:
         pushover_notify(
             cfg,
-            "td-hr-pruner",
+            title,
             msg,
-            priority=1 if failed else 0,
+            priority=1 if failed_actions else 0,
         )
 
 
