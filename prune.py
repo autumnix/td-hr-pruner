@@ -132,6 +132,10 @@ def parse_clear_actions(html: str, method: ClearMethod) -> list[ClearAction]:
 
 # ---------- TorrentDay client ----------
 
+class AuthFailure(RuntimeError):
+    """Raised when /seed_back.php redirects to login or returns a logged-out page."""
+
+
 class TDClient:
     def __init__(self, base_url: str, cookie_header: str, user_agent: str, verify_tls: bool = True):
         self.base_url = base_url.rstrip("/")
@@ -150,7 +154,7 @@ class TDClient:
         r = self.session.get(f"{self.base_url}/seed_back.php", timeout=30)
         r.raise_for_status()
         if "/login" in r.url or "Login" in r.text[:200]:
-            raise RuntimeError("auth failed — cookies look stale or invalid")
+            raise AuthFailure("auth failed — cookies look stale or invalid")
         return r.text
 
     def fire_clear(self, action: ClearAction) -> dict:
@@ -195,6 +199,45 @@ def pushover_notify(cfg: "Config", title: str, message: str, priority: int = 0) 
         r.raise_for_status()
     except Exception:
         log.exception("failed to send pushover notification")
+
+
+# ---------- Auth-failure rate limiting ----------
+#
+# We don't want to Pushover every tick when cookies are stale — at a 3h cadence
+# that's 8 alerts/day. The marker file's mtime tracks when we last alerted; we
+# only re-alert once `auth_alert_interval` seconds have passed. On any
+# successful tick we delete the marker so the next failure alerts immediately.
+
+def _auth_alert_path(cfg: "Config") -> str:
+    return os.path.join(cfg.state_dir, ".auth_alert_at")
+
+
+def auth_alert_due(cfg: "Config") -> bool:
+    path = _auth_alert_path(cfg)
+    try:
+        last = os.path.getmtime(path)
+    except FileNotFoundError:
+        return True
+    return (time.time() - last) >= cfg.auth_alert_interval
+
+
+def auth_alert_record(cfg: "Config") -> None:
+    path = _auth_alert_path(cfg)
+    try:
+        os.makedirs(cfg.state_dir, exist_ok=True)
+        with open(path, "a"):
+            os.utime(path, None)
+    except OSError as e:
+        log.warning("could not record auth-alert marker at %s: %s", path, e)
+
+
+def auth_alert_clear(cfg: "Config") -> None:
+    try:
+        os.remove(_auth_alert_path(cfg))
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        log.debug("could not clear auth-alert marker: %s", e)
 
 
 # ---------- Pruning ----------
@@ -320,6 +363,9 @@ class Config:
     continuous: bool
     dry_run: bool
 
+    state_dir: str
+    auth_alert_interval: int
+
     pushover_token: str
     pushover_user: str
 
@@ -377,6 +423,9 @@ def load_config(args: argparse.Namespace) -> Config:
         continuous=env_bool("CONTINUOUS", True) and not args.once,
         dry_run=args.dry_run or env_bool("DRY_RUN", False),
 
+        state_dir=env("STATE_DIR", "/config"),
+        auth_alert_interval=int(env("AUTH_ALERT_INTERVAL", "86400")),
+
         pushover_token=env("PUSHOVER_TOKEN", ""),
         pushover_user=env("PUSHOVER_USER", ""),
     )
@@ -401,6 +450,20 @@ def main() -> int:
     while True:
         try:
             prune_once(cfg)
+            auth_alert_clear(cfg)
+        except AuthFailure as e:
+            log.error("auth failed: %s", e)
+            if auth_alert_due(cfg):
+                pushover_notify(
+                    cfg,
+                    "td-hr-pruner: cookie expired",
+                    "TorrentDay cookies look stale — refresh /config/cookies.txt "
+                    "(or TD_COOKIES env) and the next tick will pick it up.",
+                    priority=1,
+                )
+                auth_alert_record(cfg)
+            else:
+                log.info("auth-alert suppressed (already alerted within %ds)", cfg.auth_alert_interval)
         except Exception:
             log.exception("tick failed")
             pushover_notify(cfg, "td-hr-pruner: tick failed", "see container logs", priority=1)

@@ -28,6 +28,8 @@ ENV PUID=99 \
     CLICK_DELAY=1.0 \
     POLL_INTERVAL=10800 \
     CONTINUOUS=true \
-    DRY_RUN=false
+    DRY_RUN=false \
+    STATE_DIR=/config \
+    AUTH_ALERT_INTERVAL=86400
 
 ENTRYPOINT ["/entrypoint.sh"]

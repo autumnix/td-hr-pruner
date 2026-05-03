@@ -35,6 +35,11 @@ Body:  Cleared 8/8 H&Rs (12.45 GB spent).
 
 Failures bump priority to 1 so the notification bypasses quiet hours.
 
+If the cookie goes stale, you'll get a single high-priority **"cookie
+expired"** notification — and at most one per 24 hours until you refresh
+it. The clock resets the moment the next tick succeeds. Tune
+`AUTH_ALERT_INTERVAL` (seconds) if you want a different cadence.
+
 ## Run
 
 Local:

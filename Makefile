@@ -1,6 +1,6 @@
 IMAGE_NAME=autumnix/td-hr-pruner
 LOCAL_IMAGE=td-hr-pruner:test
-VERSION?=v0.1.1
+VERSION?=v0.1.2
 PLATFORMS=linux/amd64,linux/arm64
 BUILDER?=multiarch-builder
 
